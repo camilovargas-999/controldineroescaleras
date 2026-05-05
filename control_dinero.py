@@ -96,11 +96,11 @@ def init_state():
     if 'semana_label' not in st.session_state:
         st.session_state['semana_label'] = semana
 
-    # Producción: {dia: {e1, e2, e3}}
+    # Producción: {dia: [{nombre, valor}, {nombre, valor}, {nombre, valor}]}
     if 'produccion' not in st.session_state:
-        st.session_state['produccion'] = {d: {"E1": 0, "E2": 0, "E3": 0} for d in DIAS}
+        st.session_state['produccion'] = {d: [{"nombre": "", "valor": 0.0} for _ in range(3)] for d in DIAS}
     if 'produccion_proxima' not in st.session_state:
-        st.session_state['produccion_proxima'] = {d: {"E1": 0, "E2": 0, "E3": 0} for d in DIAS}
+        st.session_state['produccion_proxima'] = {d: [{"nombre": "", "valor": 0.0} for _ in range(3)] for d in DIAS}
     if 'pendientes' not in st.session_state:
         st.session_state['pendientes'] = []
 
@@ -146,7 +146,10 @@ def fmt(v):
     return "COP {:,.0f}".format(v).replace(",", ".")
 
 def total_produccion(prod_dict):
-    return sum(v for d in prod_dict.values() for v in d.values())
+    return sum(1 for d in prod_dict.values() for e in d if e.get('nombre', '').strip())
+
+def total_valor_produccion(prod_dict):
+    return sum(e.get('valor', 0) for d in prod_dict.values() for e in d)
 
 def total_caja_entradas():
     total = 0
@@ -260,13 +263,14 @@ if pestana == "📊 Resumen General":
     st.subheader("📦 Producción diaria")
     prod_data = []
     for d in DIAS:
-        e = st.session_state['produccion'][d]
+        escaleras = st.session_state['produccion'][d]
+        nombres = [e['nombre'] for e in escaleras if e.get('nombre','').strip()]
+        valor_dia = sum(e.get('valor', 0) for e in escaleras)
         prod_data.append({
             "Día": d,
-            "Escalera 1": e["E1"],
-            "Escalera 2": e["E2"],
-            "Escalera 3": e["E3"],
-            "Total": e["E1"] + e["E2"] + e["E3"]
+            "Escaleras": ", ".join(nombres) if nombres else "—",
+            "Cantidad": len(nombres),
+            "Valor total": fmt(valor_dia)
         })
     st.dataframe(pd.DataFrame(prod_data), use_container_width=True, hide_index=True)
 
@@ -296,27 +300,57 @@ elif pestana == "🏭 Producción":
         with tab:
             st.markdown(f"#### {label}")
             total_sem = 0
+            total_valor_sem = 0.0
+
             for dia in DIAS:
                 st.markdown(f"**{dia}**")
-                cols = st.columns(4)
-                for i, escalera in enumerate(["E1", "E2", "E3"]):
-                    with cols[i]:
-                        val = st.number_input(
-                            f"Escalera {i+1}",
-                            value=int(st.session_state[key][dia][escalera]),
-                            min_value=0, step=1,
-                            key=f"{key}_{dia}_{escalera}"
+                # 3 escaleras × 2 campos (nombre + valor) = 6 recuadros por día
+                cols = st.columns(7)  # 3 pares + 1 columna de resumen
+                dia_cantidad = 0
+                dia_valor = 0.0
+
+                for i in range(3):
+                    escalera = st.session_state[key][dia][i]
+                    with cols[i * 2]:
+                        nombre = st.text_input(
+                            f"Escalera {i+1} — Nombre",
+                            value=escalera.get('nombre', ''),
+                            placeholder=f"Ej: Recta 3m",
+                            key=f"{key}_{dia}_nombre_{i}"
                         )
-                        st.session_state[key][dia][escalera] = val
-                dia_total = sum(st.session_state[key][dia].values())
-                total_sem += dia_total
-                with cols[3]:
-                    st.metric("Total día", dia_total)
+                        st.session_state[key][dia][i]['nombre'] = nombre
+                    with cols[i * 2 + 1]:
+                        valor = st.number_input(
+                            f"Valor (COP)",
+                            value=float(escalera.get('valor', 0.0)),
+                            min_value=0.0, step=10000.0, format="%.0f",
+                            key=f"{key}_{dia}_valor_{i}"
+                        )
+                        st.session_state[key][dia][i]['valor'] = valor
+                    if nombre.strip():
+                        dia_cantidad += 1
+                        dia_valor += valor
+
+                with cols[6]:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.metric("Subtotal", fmt(dia_valor))
+                    st.caption(f"{dia_cantidad} escalera{'s' if dia_cantidad != 1 else ''}")
+
+                total_sem      += dia_cantidad
+                total_valor_sem += dia_valor
                 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
-            st.markdown(f"<div class='card card-green'><div class='label'>Total {label}</div>"
-                        f"<div class='big-number green'>{total_sem} escaleras</div></div>",
-                        unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            c1.markdown(
+                f"<div class='card card-green'><div class='label'>Escaleras {label}</div>"
+                f"<div class='big-number green'>{total_sem} escaleras</div></div>",
+                unsafe_allow_html=True
+            )
+            c2.markdown(
+                f"<div class='card card-blue'><div class='label'>Valor total {label}</div>"
+                f"<div class='big-number blue'>{fmt(total_valor_sem)}</div></div>",
+                unsafe_allow_html=True
+            )
 
     with tab3:
         st.markdown("#### 📋 Escaleras Pendientes")
